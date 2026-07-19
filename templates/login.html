@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}用户登录{% endblock %}
+
+{% block content %}
+<script>
+function refreshCaptcha() {
+    var oldToken = document.querySelector('input[name="captcha_token"]').value;
+    fetch('/captcha/refresh?old_token=' + encodeURIComponent(oldToken))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            document.querySelector('input[name="captcha_token"]').value = data.token;
+            document.querySelector('.captcha-img').src = '/captcha?token=' + data.token + '&' + Date.now();
+        });
+}
+</script>
+<div class="card login-card">
+    <h2 class="card-title">用户登录</h2>
+
+    {% if error %}
+        <div class="error-message">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" class="login-form">
+        <input type="hidden" name="captcha_token" value="{{ captcha_token }}">
+        <div class="form-group">
+            <label for="username">用户名：</label>
+            <input type="text" id="username" name="username" class="form-input" required>
+        </div>
+        <div class="form-group">
+            <label for="password">密　码：</label>
+            <input type="password" id="password" name="password" class="form-input" required>
+        </div>
+        <div class="form-group">
+            <label for="captcha">验证码：</label>
+            <div class="captcha-row">
+                <input type="text" id="captcha" name="captcha" class="form-input captcha-input" maxlength="4" autocomplete="off">
+                <img src="/captcha?token={{ captcha_token }}" alt="验证码" class="captcha-img"
+                     onclick="refreshCaptcha()" title="点击刷新验证码">
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary">登录</button>
+    </form>
+</div>
+{% endblock %}
