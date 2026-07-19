@@ -1,0 +1,208 @@
+/* ===== Reset ===== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #f0f2f5;
+    min-height: 100vh;
+    color: #333;
+}
+
+a {
+    text-decoration: none;
+    color: inherit;
+}
+
+ul {
+    list-style: none;
+}
+
+/* ===== Navbar ===== */
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 24px;
+    height: 56px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.navbar-brand {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+.navbar-menu {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.navbar-welcome {
+    font-size: 14px;
+    opacity: 0.95;
+}
+
+.navbar-link {
+    font-size: 14px;
+    padding: 6px 14px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.15);
+    transition: background 0.2s;
+}
+
+.navbar-link:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* ===== Container ===== */
+.container {
+    max-width: 600px;
+    margin: 40px auto;
+    padding: 0 16px;
+}
+
+/* ===== Card ===== */
+.card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    padding: 32px;
+    margin-bottom: 24px;
+}
+
+.login-card {
+    max-width: 400px;
+    margin: 0 auto;
+}
+
+.card-title {
+    font-size: 22px;
+    margin-bottom: 20px;
+    color: #333;
+    text-align: center;
+}
+
+.card-text {
+    font-size: 15px;
+    color: #666;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+/* ===== User Info List ===== */
+.user-info-list li {
+    display: flex;
+    padding: 10px 0;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 15px;
+}
+
+.user-info-list li:last-child {
+    border-bottom: none;
+}
+
+.info-label {
+    width: 80px;
+    font-weight: 600;
+    color: #555;
+    flex-shrink: 0;
+}
+
+/* ===== Form ===== */
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-group label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #555;
+}
+
+.form-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d9d9d9;
+    border-radius: 6px;
+    font-size: 15px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.form-input:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+}
+
+/* ===== Button ===== */
+.btn {
+    display: inline-block;
+    padding: 10px 24px;
+    font-size: 15px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.2s, transform 0.1s;
+}
+
+.btn:active {
+    transform: scale(0.97);
+}
+
+.btn-primary {
+    background: #667eea;
+    color: #fff;
+}
+
+.btn-primary:hover {
+    background: #5a6fd6;
+}
+
+/* ===== Error Message ===== */
+.error-message {
+    background: #fff2f0;
+    border: 1px solid #ffccc7;
+    border-radius: 6px;
+    color: #cf1322;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    text-align: center;
+}
+
+/* ===== Captcha ===== */
+.captcha-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.captcha-input {
+    flex: 1;
+}
+
+.captcha-img {
+    width: 120px;
+    height: 40px;
+    border-radius: 6px;
+    border: 1px solid #d9d9d9;
+    cursor: pointer;
+    flex-shrink: 0;
+}
