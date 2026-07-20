@@ -5,6 +5,8 @@ import string
 import uuid
 import hashlib
 import os
+import sqlite3
+import re
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
@@ -40,6 +42,28 @@ locked_until = {}
 CAPTCHA_EXPIRE = 300   # 验证码有效期 5 分钟
 LOCK_DURATION = 180     # 锁定时间 3 分钟
 MAX_FAILS = 5           # 最大失败次数
+
+
+def init_db():
+    os.makedirs("data", exist_ok=True)
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        email TEXT,
+        phone TEXT
+    )""")
+    # 密码MD5哈希后存储
+    admin_pwd = hashlib.md5(b"admin123").hexdigest()
+    alice_pwd = hashlib.md5(b"alice2025").hexdigest()
+    c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
+              ("admin", admin_pwd, "admin@example.com", "13800138000"))
+    c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
+              ("alice", alice_pwd, "alice@example.com", "13900139001"))
+    conn.commit()
+    conn.close()
 
 
 def clean_expired_captcha():
@@ -182,7 +206,8 @@ def login():
             )
 
     # GET 请求：生成验证码 token
-    return render_template("login.html", captcha_token=gen_captcha_token())
+    msg = request.args.get("msg", "")
+    return render_template("login.html", captcha_token=gen_captcha_token(), msg=msg)
 
 
 def gen_captcha_token():
@@ -199,5 +224,49 @@ def logout():
     return redirect("/")
 
 
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        email = request.form.get("email", "").strip()
+        phone = request.form.get("phone", "").strip()
+
+        # 输入校验
+        if not username or not password:
+            return render_template("register.html", error="用户名和密码不能为空")
+        if not re.match(r"^\w{2,20}$", username):
+            return render_template("register.html", error="用户名仅允许字母、数字、下划线、中文，2-20位")
+        if email and not re.match(r"^[^@]+@[^@]+\.[^@]+$", email):
+            return render_template("register.html", error="邮箱格式不正确")
+        if phone and not re.match(r"^\d{5,15}$", phone):
+            return render_template("register.html", error="手机号格式不正确")
+
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        sql = "INSERT INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)"
+        c.execute(sql, (username, password, email, phone))
+        conn.commit()
+        conn.close()
+        return redirect("/login?msg=注册成功，请登录")
+    error = request.args.get("error", "")
+    return render_template("register.html", error=error)
+
+
+@app.route("/search")
+def search():
+    if not session.get("username"):
+        return redirect("/login")
+    keyword = request.args.get("keyword", "")
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    sql = "SELECT * FROM users WHERE username LIKE ? OR email LIKE ?"
+    c.execute(sql, (f"%{keyword}%", f"%{keyword}%"))
+    rows = c.fetchall()
+    conn.close()
+    return render_template("index.html", user=USERS.get(session.get("username")), search_results=rows, keyword=keyword)
+
+
 if __name__ == "__main__":
+    init_db()
     app.run(debug=True, host="0.0.0.0", port=5000)

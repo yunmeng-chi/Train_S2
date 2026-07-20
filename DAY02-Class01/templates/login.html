@@ -17,6 +17,10 @@ function refreshCaptcha() {
 <div class="card login-card">
     <h2 class="card-title">用户登录</h2>
 
+    {% if msg %}
+        <div class="success-message">{{ msg }}</div>
+    {% endif %}
+
     {% if error %}
         <div class="error-message">{{ error }}</div>
     {% endif %}
@@ -41,5 +45,6 @@ function refreshCaptcha() {
         </div>
         <button type="submit" class="btn btn-primary">登录</button>
     </form>
+    <p style="text-align:center;margin-top:16px"><a href="/" style="color:#667eea;text-decoration:underline">返回至首页</a></p>
 </div>
 {% endblock %}
