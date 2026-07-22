@@ -5,28 +5,36 @@ import string
 import uuid
 import hashlib
 import os
+import sqlite3
+import re
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
+from decimal import Decimal, ROUND_HALF_UP
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24).hex())
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB
 
 USERS = {
     "admin": {
+        "id": 1,
         "username": "admin",
         "password": "0192023a7bbd73250516f069df18b500",
         "role": "admin",
         "email": "admin@example.com",
         "phone": "13800138000",
-        "balance": 99999
+        "balance": 99999,
+        "avatar": None
     },
     "alice": {
+        "id": 2,
         "username": "alice",
         "password": "78d03b2810a74e5751c02db550798676",
         "role": "user",
         "email": "alice@example.com",
         "phone": "13900139001",
-        "balance": 100
+        "balance": 100,
+        "avatar": None
     }
 }
 
@@ -40,6 +48,28 @@ locked_until = {}
 CAPTCHA_EXPIRE = 300   # 验证码有效期 5 分钟
 LOCK_DURATION = 180     # 锁定时间 3 分钟
 MAX_FAILS = 5           # 最大失败次数
+
+
+def init_db():
+    os.makedirs("data", exist_ok=True)
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        email TEXT,
+        phone TEXT
+    )""")
+    # 密码MD5哈希后存储
+    admin_pwd = hashlib.md5(b"admin123").hexdigest()
+    alice_pwd = hashlib.md5(b"alice2025").hexdigest()
+    c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
+              ("admin", admin_pwd, "admin@example.com", "13800138000"))
+    c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
+              ("alice", alice_pwd, "alice@example.com", "13900139001"))
+    conn.commit()
+    conn.close()
 
 
 def clean_expired_captcha():
@@ -182,7 +212,8 @@ def login():
             )
 
     # GET 请求：生成验证码 token
-    return render_template("login.html", captcha_token=gen_captcha_token())
+    msg = request.args.get("msg", "")
+    return render_template("login.html", captcha_token=gen_captcha_token(), msg=msg)
 
 
 def gen_captcha_token():
@@ -199,5 +230,170 @@ def logout():
     return redirect("/")
 
 
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        email = request.form.get("email", "").strip()
+        phone = request.form.get("phone", "").strip()
+
+        # 输入校验
+        if not username or not password:
+            return render_template("register.html", error="用户名和密码不能为空")
+        if not re.match(r"^\w{2,20}$", username):
+            return render_template("register.html", error="用户名仅允许字母、数字、下划线、中文，2-20位")
+        if email and not re.match(r"^[^@]+@[^@]+\.[^@]+$", email):
+            return render_template("register.html", error="邮箱格式不正确")
+        if phone and not re.match(r"^\d{5,15}$", phone):
+            return render_template("register.html", error="手机号格式不正确")
+
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        sql = "INSERT INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)"
+        hashed = hashlib.md5(password.encode()).hexdigest()
+        c.execute(sql, (username, hashed, email, phone))
+        conn.commit()
+        conn.close()
+        # 同步到 USERS 内存字典，使登录功能能找到该用户
+        USERS[username] = {
+            "id": max(u["id"] for u in USERS.values()) + 1,
+            "username": username,
+            "password": hashed,
+            "role": "user",
+            "email": email,
+            "phone": phone,
+            "balance": 0,
+            "avatar": None
+        }
+        return redirect("/login?msg=注册成功，请登录")
+    error = request.args.get("error", "")
+    return render_template("register.html", error=error)
+
+
+@app.route("/search")
+def search():
+    if not session.get("username"):
+        return redirect("/login")
+    keyword = request.args.get("keyword", "")
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    sql = "SELECT * FROM users WHERE username LIKE ? OR email LIKE ?"
+    c.execute(sql, (f"%{keyword}%", f"%{keyword}%"))
+    rows = c.fetchall()
+    conn.close()
+    return render_template("index.html", user=USERS.get(session.get("username")), search_results=rows, keyword=keyword)
+
+
+@app.route("/profile")
+def profile():
+    # [修复] 新增身份认证校验
+    if not session.get("username"):
+        return redirect("/login")
+
+    login_username = session.get("username")
+    login_user = USERS.get(login_username)
+    if not login_user:
+        return redirect("/login")
+
+    user_id = request.args.get("user_id", type=int)
+    if user_id is None:
+        return "缺少 user_id 参数", 400
+
+    # [修复] 校验当前登录用户只能查看自己的资料，防止水平越权
+    if login_user["id"] != user_id:
+        return "无权查看其他用户资料", 403
+
+    # 从 USERS 字典中按 id 查找用户
+    user = None
+    for u in USERS.values():
+        if u["id"] == user_id:
+            user = dict(u)  # 复制一份以免修改原始数据
+            break
+    if user is None:
+        return "用户不存在", 404
+
+    # [修复] 敏感信息脱敏处理
+    if user.get("phone") and len(user["phone"]) >= 7:
+        user["phone"] = user["phone"][:3] + "****" + user["phone"][-4:]
+    if user.get("email") and "@" in user["email"]:
+        parts = user["email"].split("@")
+        if len(parts[0]) >= 2:
+            user["email"] = parts[0][0] + "***@" + parts[1]
+        else:
+            user["email"] = parts[0][0] + "@" + parts[1]
+
+    return render_template("profile.html", user=user)
+
+
+@app.route("/recharge", methods=["POST"])
+def recharge():
+    # [修复] 新增身份认证校验
+    if not session.get("username"):
+        return redirect("/login")
+
+    login_username = session.get("username")
+    login_user = USERS.get(login_username)
+    if not login_user:
+        return redirect("/login")
+
+    # [修复] user_id 改为从 session 获取，不从表单参数读取，防止越权篡改他人余额
+    user_id = login_user["id"]
+    amount = request.form.get("amount", type=float)
+
+    if amount is None:
+        return "缺少金额参数", 400
+
+    # [修复] 校验充值金额必须为正数
+    if amount <= 0:
+        return "充值金额必须为正数", 400
+
+    # [修复] 单次充值金额上限限制
+    MAX_AMOUNT = 100000
+    if amount > MAX_AMOUNT:
+        return f"单次充值金额不能超过 {MAX_AMOUNT}", 400
+
+    # [修复] 使用 Decimal 精准计算，避免浮点精度误差
+    amount = float(Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+    # 按 id 查找用户并修改余额
+    for u in USERS.values():
+        if u["id"] == user_id:
+            u["balance"] += amount
+            break
+    else:
+        return "用户不存在", 404
+    return redirect(f"/profile?user_id={user_id}")
+
+
+@app.route("/upload", methods=["GET", "POST"])
+def upload():
+    if not session.get("username"):
+        return redirect("/login")
+    if request.method == "POST":
+        if "avatar" not in request.files:
+            return render_template("upload.html", error="请选择文件")
+        file = request.files["avatar"]
+        if file.filename == "":
+            return render_template("upload.html", error="文件名为空")
+
+        # 扩展名白名单校验
+        ALLOWED_EXT = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
+        ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+        if ext not in ALLOWED_EXT:
+            return render_template("upload.html", error=f"仅允许上传图片文件（{', '.join(sorted(ALLOWED_EXT))}）")
+
+        os.makedirs("static/uploads", exist_ok=True)
+        filepath = os.path.join("static/uploads", file.filename)
+        file.save(filepath)
+        url = "/" + filepath.replace("\\", "/")
+        username = session.get("username")
+        if username in USERS:
+            USERS[username]["avatar"] = url
+        return redirect("/")
+    return render_template("upload.html")
+
+
 if __name__ == "__main__":
+    init_db()
     app.run(debug=True, host="0.0.0.0", port=5000)

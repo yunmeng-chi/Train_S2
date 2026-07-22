@@ -12,9 +12,13 @@
         <div class="navbar-menu">
             {% if session.username %}
                 <span class="navbar-welcome">欢迎，{{ session.username }}</span>
+                <a href="/profile?user_id=" class="navbar-link" onclick="event.preventDefault();var id=prompt('请输入用户ID');if(id)location.href='/profile?user_id='+encodeURIComponent(id)">个人中心</a>
+                <a href="/upload" class="navbar-link">上传头像</a>
+                <a href="/search?keyword=" class="navbar-link" onclick="event.preventDefault();var k=prompt('请输入搜索关键词');if(k)location.href='/search?keyword='+encodeURIComponent(k)">搜索</a>
                 <a href="/logout" class="navbar-link">退出</a>
             {% else %}
                 <a href="/login" class="navbar-link">登录</a>
+                <a href="/register" class="navbar-link">注册</a>
             {% endif %}
         </div>
     </nav>

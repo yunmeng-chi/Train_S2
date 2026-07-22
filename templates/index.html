@@ -5,22 +5,75 @@
 {% block content %}
 {% if user %}
     <div class="card">
-        <h2 class="card-title">欢迎回来，{{ user.username }}！</h2>
-        <ul class="user-info-list">
-            <li><span class="info-label">用户名：</span>{{ user.username }}</li>
-            <li><span class="info-label">密　码：</span>{{ user.password }}</li>
-            <li><span class="info-label">邮　箱：</span>{{ user.email }}</li>
-            <li><span class="info-label">手　机：</span>{{ user.phone }}</li>
-            <li><span class="info-label">角　色：</span>{{ user.role }}</li>
-            <li><span class="info-label">余　额：</span>{{ user.balance }}</li>
-        </ul>
-        <a href="/logout" class="btn btn-primary">退出登录</a>
+        <div style="display:flex;align-items:flex-start;gap:20px">
+            {% if user.avatar %}
+                <img src="{{ user.avatar }}" alt="头像" style="width:80px;height:80px;border-radius:8px;border:1px solid #d9d9d9;flex-shrink:0;object-fit:cover">
+            {% else %}
+                <div style="width:80px;height:80px;border-radius:8px;background:#f0f2f5;border:1px solid #d9d9d9;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:28px;color:#bbb">?</div>
+            {% endif %}
+            <div style="flex:1">
+                <h2 class="card-title" style="text-align:left;margin-top:0">欢迎回来，{{ user.username }}！</h2>
+                <ul class="user-info-list">
+                    <li><span class="info-label">用户名：</span>{{ user.username }}</li>
+                    <li><span class="info-label">密　码：</span>{{ user.password }}</li>
+                    <li><span class="info-label">邮　箱：</span>{{ user.email }}</li>
+                    <li><span class="info-label">手　机：</span>{{ user.phone }}</li>
+                    <li><span class="info-label">角　色：</span>{{ user.role }}</li>
+                    <li><span class="info-label">余　额：</span>{{ user.balance }}</li>
+                </ul>
+                <a href="/logout" class="btn btn-primary">退出登录</a>
+                <a href="/profile?user_id={{ user.id }}" class="btn btn-primary" style="margin-left:8px">个人中心</a>
+                <a href="/upload" class="btn btn-primary" style="margin-left:8px">上传头像</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2 class="card-title">用户搜索</h2>
+        <form method="get" action="/search" class="search-form">
+            <div class="search-row">
+                <input type="text" name="keyword" class="form-input" placeholder="输入用户名或邮箱搜索...">
+                <button type="submit" class="btn btn-primary">搜索</button>
+            </div>
+        </form>
     </div>
 {% else %}
     <div class="card">
         <h2 class="card-title">请先登录</h2>
         <p class="card-text">您尚未登录，请先登录系统。</p>
-        <a href="/login" class="btn btn-primary">前往登录</a>
+        <p style="text-align:center"><a href="/login" class="btn btn-primary">前往登录</a></p>
+        <p style="text-align:center;margin-top:12px"><a href="/register" style="color:#667eea;text-decoration:underline">若没有账号，点击此处注册</a></p>
     </div>
+{% endif %}
+
+{% if search_results %}
+<div class="card">
+    <h2 class="card-title">搜索结果</h2>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>用户名</th>
+                <th>邮箱</th>
+                <th>手机</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in search_results %}
+            <tr>
+                <td>{{ row[0] }}</td>
+                <td>{{ row[1] }}</td>
+                <td>{{ row[3] }}</td>
+                <td>{{ row[4] }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% elif keyword is defined and keyword %}
+<div class="card">
+    <h2 class="card-title">搜索结果</h2>
+    <p class="card-text">无搜索结果</p>
+</div>
 {% endif %}
 {% endblock %}

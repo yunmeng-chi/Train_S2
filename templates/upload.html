@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}上传头像{% endblock %}
+
+{% block content %}
+<div class="card login-card">
+    <h2 class="card-title">上传头像</h2>
+
+    {% if error %}
+        <div class="error-message">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data" class="login-form">
+        <div class="form-group">
+            <label for="avatar">选择文件：</label>
+            <input type="file" id="avatar" name="avatar" class="form-input" required>
+        </div>
+        <button type="submit" class="btn btn-primary">上传</button>
+    </form>
+
+    {% if url %}
+        <hr style="margin:20px 0;border:none;border-top:1px solid #f0f0f0">
+        <p style="text-align:center;font-size:14px;color:#389e0d">✅ 上传成功！</p>
+        <p style="text-align:center;margin-top:8px">
+            <img src="{{ url }}" alt="头像预览" style="max-width:200px;max-height:200px;border-radius:8px;border:1px solid #d9d9d9">
+        </p>
+        <p style="text-align:center;margin-top:8px;font-size:13px;color:#888">
+            文件名：{{ filename }}<br>
+            <a href="{{ url }}" target="_blank" style="color:#667eea;text-decoration:underline">打开文件链接</a>
+        </p>
+    {% endif %}
+
+    <p style="text-align:center;margin-top:16px"><a href="/" style="color:#667eea;text-decoration:underline">返回至首页</a></p>
+</div>
+{% endblock %}
