@@ -175,6 +175,45 @@ ul {
     background: #5a6fd6;
 }
 
+.btn-help {
+    display: inline-block;
+    padding: 10px 24px;
+    font-size: 15px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.2s, transform 0.1s;
+    background: #b39ddb;
+    color: #fff;
+    min-width: 140px;
+}
+
+.btn-help:hover {
+    background: #a188cf;
+}
+
+.btn-help:active {
+    transform: scale(0.97);
+}
+
+.btn-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.btn-row .btn {
+    flex: 1;
+    min-width: 0;
+}
+
+.btn-row-center {
+    display: flex;
+    justify-content: center;
+    margin-top: 12px;
+}
+
 /* ===== Error Message ===== */
 .error-message {
     background: #fff2f0;

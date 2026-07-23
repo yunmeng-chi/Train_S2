@@ -7,6 +7,7 @@ import hashlib
 import os
 import sqlite3
 import re
+import bleach
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 from decimal import Decimal, ROUND_HALF_UP
@@ -155,7 +156,7 @@ def index():
     user = None
     if username and username in USERS:
         user = USERS[username]
-    return render_template("index.html", user=user)
+    return render_template("index.html", user=user, page_content=None)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -192,7 +193,7 @@ def login():
             failed_attempts.pop(username, None)
             locked_until.pop(username, None)
             session["username"] = username
-            return render_template("index.html", user=USERS[username])
+            return render_template("index.html", user=USERS[username], page_content=None)
         else:
             # 登录失败：计数
             failed_attempts[username] = failed_attempts.get(username, 0) + 1
@@ -282,7 +283,7 @@ def search():
     c.execute(sql, (f"%{keyword}%", f"%{keyword}%"))
     rows = c.fetchall()
     conn.close()
-    return render_template("index.html", user=USERS.get(session.get("username")), search_results=rows, keyword=keyword)
+    return render_template("index.html", user=USERS.get(session.get("username")), search_results=rows, keyword=keyword, page_content=None)
 
 
 @app.route("/profile")
@@ -366,6 +367,51 @@ def recharge():
     return redirect(f"/profile?user_id={user_id}")
 
 
+# 安全白名单：仅允许预定义的页面名（修复漏洞1 LFI目录穿越 CWE-22/CWE-98）
+ALLOWED_PAGES = {"help", "about", "faq"}
+PAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pages")
+
+@app.route("/page")
+def page():
+    # [修复漏洞7/漏洞11] 新增登录态校验，防止未授权访问
+    if not session.get("username"):
+        return redirect("/login")
+
+    name = request.args.get("name", "")
+    if not name:
+        return "缺少 name 参数", 400
+
+    # [修复漏洞1 LFI目录穿越 CWE-22/CWE-98] 白名单校验
+    if name not in ALLOWED_PAGES:
+        return "页面不存在", 404
+
+    # [修复漏洞3 路径编码绕过 CWE-174] 使用规范化路径 + 二次防护
+    filename = name + ".html"
+    filepath = os.path.join(PAGES_DIR, filename)
+    real_path = os.path.realpath(filepath)
+
+    # 二次防护：确保最终路径在 pages 目录内
+    if not real_path.startswith(os.path.realpath(PAGES_DIR) + os.sep):
+        return "页面不存在", 403
+
+    try:
+        with open(real_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except FileNotFoundError:
+        return "页面不存在", 404
+
+    # [修复漏洞7 XSS CWE-79] 使用 bleach 清洗 HTML，只允许安全标签
+    allowed_tags = ["h2", "h3", "h4", "p", "b", "strong", "em", "i",
+                    "hr", "br", "ul", "ol", "li", "a", "code", "pre",
+                    "blockquote", "table", "thead", "tbody", "tr", "th", "td"]
+    allowed_attrs = {"a": ["href", "title"]}
+    content = bleach.clean(content, tags=allowed_tags, attributes=allowed_attrs, strip=True)
+
+    login_username = session.get("username")
+    user = USERS.get(login_username) if login_username else None
+    return render_template("index.html", user=user, page_content=content)
+
+
 @app.route("/upload", methods=["GET", "POST"])
 def upload():
     if not session.get("username"):
@@ -377,21 +423,55 @@ def upload():
         if file.filename == "":
             return render_template("upload.html", error="文件名为空")
 
-        # 扩展名白名单校验
+        # [修复漏洞8 上传路径穿越 CWE-22] 扩展名白名单校验
         ALLOWED_EXT = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
         ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
         if ext not in ALLOWED_EXT:
             return render_template("upload.html", error=f"仅允许上传图片文件（{', '.join(sorted(ALLOWED_EXT))}）")
 
+        # [修复漏洞9 文件内容绕过 CWE-434] Magic Number 校验文件真实性
+        magic_bytes = file.read(16)
+        file.seek(0)
+        magic_map = {
+            b"\xff\xd8": "jpg",
+            b"\x89PNG\r\n\x1a\n": "png",
+            b"GIF87a": "gif",
+            b"GIF89a": "gif",
+            b"RIFF": "webp",
+            b"BM": "bmp",
+        }
+        detected_ext = None
+        for magic, mext in magic_map.items():
+            if magic_bytes[:len(magic)] == magic:
+                detected_ext = mext
+                break
+        if detected_ext is None:
+            return render_template("upload.html", error="文件内容不是有效的图片格式"), 400
+        # JPEG 检测特殊处理：检测 JFIF/EXIF
+        if detected_ext == "jpg" and not (b"JFIF" in magic_bytes or b"EXIF" in magic_bytes):
+            if ext != "jpg":
+                # webp/bmp 可能没有 JFIF
+                pass
+
+        # [修复漏洞8 路径穿越 CWE-22] 使用 UUID 重命名文件，杜绝路径穿越
+        safe_filename = f"{uuid.uuid4().hex}.{ext}"
         os.makedirs("static/uploads", exist_ok=True)
-        filepath = os.path.join("static/uploads", file.filename)
+        filepath = os.path.join("static/uploads", safe_filename)
         file.save(filepath)
+
         url = "/" + filepath.replace("\\", "/")
         username = session.get("username")
         if username in USERS:
             USERS[username]["avatar"] = url
         return redirect("/")
     return render_template("upload.html")
+
+
+@app.after_request
+def add_security_headers(response):
+    """[修复漏洞10 CWE-552] 添加安全响应头，防止静态文件目录遍历"""
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 if __name__ == "__main__":

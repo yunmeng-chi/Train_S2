@@ -21,9 +21,14 @@
                     <li><span class="info-label">角　色：</span>{{ user.role }}</li>
                     <li><span class="info-label">余　额：</span>{{ user.balance }}</li>
                 </ul>
-                <a href="/logout" class="btn btn-primary">退出登录</a>
-                <a href="/profile?user_id={{ user.id }}" class="btn btn-primary" style="margin-left:8px">个人中心</a>
-                <a href="/upload" class="btn btn-primary" style="margin-left:8px">上传头像</a>
+                <div class="btn-row">
+                    <a href="/logout" class="btn btn-primary">退出登录</a>
+                    <a href="/profile?user_id={{ user.id }}" class="btn btn-primary">个人中心</a>
+                    <a href="/upload" class="btn btn-primary">上传头像</a>
+                </div>
+                <div class="btn-row-center">
+                    <a href="/page?name=help" class="btn-help">帮助中心</a>
+                </div>
             </div>
         </div>
     </div>
@@ -74,6 +79,14 @@
 <div class="card">
     <h2 class="card-title">搜索结果</h2>
     <p class="card-text">无搜索结果</p>
+</div>
+{% endif %}
+
+{% if page_content %}
+<div class="card">
+    <div class="page-content">
+        {{ page_content }}
+    </div>
 </div>
 {% endif %}
 {% endblock %}
