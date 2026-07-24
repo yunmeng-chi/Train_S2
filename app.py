@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, session, make_response, jsonify
+from flask import Flask, render_template, request, redirect, session, make_response, jsonify, abort
 import time
 import random
 import string
@@ -8,6 +8,7 @@ import os
 import sqlite3
 import re
 import bleach
+import secrets
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 from decimal import Decimal, ROUND_HALF_UP
@@ -15,6 +16,12 @@ from decimal import Decimal, ROUND_HALF_UP
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24).hex())
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB
+
+# [修复漏洞7 GET CSRF CWE-352] /logout 改为仅 POST
+# [修复漏洞4/5/6/8/9 CSRF CWE-352] CSRF Token + SameSite 配置
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+CSRF_TOKEN_EXPIRE = 1800  # Token 有效期 30 分钟
 
 USERS = {
     "admin": {
@@ -78,6 +85,58 @@ def clean_expired_captcha():
     expired = [k for k, v in captcha_codes.items() if v["expires"] < now]
     for k in expired:
         del captcha_codes[k]
+
+
+# [修复漏洞2/漏洞3 XSS CWE-79] 输出消毒函数：过滤 msg/error/keyword 中的危险字符
+def sanitize_output(text):
+    """过滤反射型 XSS 参数中的危险 HTML 标签和事件处理器"""
+    if not text:
+        return text
+    # 移除 script 标签及内容
+    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.IGNORECASE | re.DOTALL)
+    # 移除 on* 事件处理器
+    text = re.sub(r'\bon\w+\s*=', ' disabled_=', text, flags=re.IGNORECASE)
+    # 移除 javascript: 伪协议
+    text = re.sub(r'javascript\s*:', 'disabled:', text, flags=re.IGNORECASE)
+    # 移除 <style> 块
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.IGNORECASE | re.DOTALL)
+    return text
+
+
+# [修复漏洞4/5/6/8/9 CSRF CWE-352] CSRF Token 生成器
+def generate_csrf_token():
+    """生成或刷新 Session 绑定的 CSRF Token"""
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+        session["csrf_token_time"] = time.time()
+    return session["csrf_token"]
+
+
+# [修复漏洞4/5/6/8/9 CSRF CWE-352] CSRF Token 校验器
+def validate_csrf():
+    """校验 CSRF Token：绑定 Session + 过期校验 + 一次性使用"""
+    if request.method == "POST":
+        token = request.form.get("csrf_token", "")
+        stored_token = session.get("csrf_token", "")
+        token_time = session.get("csrf_token_time", 0)
+
+        if not token:
+            abort(400, "CSRF Token 缺失")
+        if token != stored_token:
+            abort(400, "CSRF Token 无效")
+        if time.time() - token_time > CSRF_TOKEN_EXPIRE:
+            abort(400, "CSRF Token 已过期")
+        # 一次性使用：消费后立即失效
+        session.pop("csrf_token", None)
+        session.pop("csrf_token_time", None)
+
+
+# [修复漏洞4/5/6/8/9 CSRF CWE-352] 全局 before_request：GET 请求预生成 Token
+@app.before_request
+def before_request_csrf():
+    """GET 请求时预生成 CSRF Token（除静态资源外）"""
+    if request.method == "GET" and not request.path.startswith("/static"):
+        generate_csrf_token()
 
 
 def gen_captcha_text(length=4):
@@ -162,6 +221,9 @@ def index():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        # [修复漏洞4/8 CSRF] 校验 CSRF Token
+        validate_csrf()
+
         now = time.time()
         username = request.form.get("username", "")
         captcha_input = request.form.get("captcha", "").strip().upper()
@@ -214,6 +276,8 @@ def login():
 
     # GET 请求：生成验证码 token
     msg = request.args.get("msg", "")
+    # [修复漏洞2 XSS CWE-79] 对 msg/error 参数做输出消毒
+    msg = sanitize_output(msg)
     return render_template("login.html", captcha_token=gen_captcha_token(), msg=msg)
 
 
@@ -225,8 +289,10 @@ def gen_captcha_token():
     return token
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["POST"])
 def logout():
+    # [修复漏洞7 CSRF CWE-352] 改为仅 POST 方法，避免 GET 请求 CSRF
+    validate_csrf()
     session.clear()
     return redirect("/")
 
@@ -234,6 +300,9 @@ def logout():
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
+        # [修复漏洞4/8 CSRF CWE-352] 校验 CSRF Token
+        validate_csrf()
+
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         email = request.form.get("email", "").strip()
@@ -269,6 +338,8 @@ def register():
         }
         return redirect("/login?msg=注册成功，请登录")
     error = request.args.get("error", "")
+    # [修复漏洞2 XSS CWE-79] 消毒 error 参数
+    error = sanitize_output(error)
     return render_template("register.html", error=error)
 
 
@@ -277,6 +348,9 @@ def search():
     if not session.get("username"):
         return redirect("/login")
     keyword = request.args.get("keyword", "")
+    # [修复漏洞2 XSS CWE-79] 对搜索关键词做输出消毒
+    keyword = sanitize_output(keyword)
+    conn = sqlite3.connect("data/users.db")
     conn = sqlite3.connect("data/users.db")
     c = conn.cursor()
     sql = "SELECT * FROM users WHERE username LIKE ? OR email LIKE ?"
@@ -299,7 +373,8 @@ def profile():
 
     user_id = request.args.get("user_id", type=int)
     if user_id is None:
-        return "缺少 user_id 参数", 400
+        # [修复漏洞3 DOM XSS] 未提供 user_id 时默认跳转到当前用户的个人中心
+        user_id = login_user["id"]
 
     # [修复] 校验当前登录用户只能查看自己的资料，防止水平越权
     if login_user["id"] != user_id:
@@ -329,7 +404,9 @@ def profile():
 
 @app.route("/recharge", methods=["POST"])
 def recharge():
-    # [修复] 新增身份认证校验
+    # [修复漏洞5 CSRF CWE-352] 校验 CSRF Token
+    validate_csrf()
+    # [修复漏洞11] 新增身份认证校验
     if not session.get("username"):
         return redirect("/login")
 
@@ -414,6 +491,10 @@ def page():
 
 @app.route("/upload", methods=["GET", "POST"])
 def upload():
+    # [修复漏洞6 CSRF CWE-352] 校验 CSRF Token（POST 时）
+    if request.method == "POST":
+        validate_csrf()
+
     if not session.get("username"):
         return redirect("/login")
     if request.method == "POST":
@@ -469,9 +550,61 @@ def upload():
 
 @app.after_request
 def add_security_headers(response):
-    """[修复漏洞10 CWE-552] 添加安全响应头，防止静态文件目录遍历"""
+    """添加安全响应头：CSP + X-Content-Type-Options + Referrer-Policy"""
+    # [修复漏洞3 DOM XSS CWE-79] 内容安全策略 CSP 头
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "object-src 'none'; "
+        "frame-ancestors 'none';"
+    )
+    # [修复漏洞10 CWE-552] X-Content-Type-Options
     response.headers["X-Content-Type-Options"] = "nosniff"
+    # Referrer-Policy 防止 Referer 泄露
+    response.headers["Referrer-Policy"] = "same-origin"
     return response
+
+
+@app.route("/change-password", methods=["POST"])
+def change_password():
+    # [修复漏洞4 CSRF CWE-352] 校验 CSRF Token
+    validate_csrf()
+    # [修复漏洞11] 新增身份认证校验
+    if not session.get("username"):
+        return redirect("/login")
+
+    # [修复漏洞4 CSRF+越权 CWE-352] 从 session 获取当前登录用户，禁止修改他人密码
+    login_username = session.get("username")
+    if login_username not in USERS:
+        return "用户不存在", 404
+
+    # [修复漏洞4 CWE-352] 增加原密码校验
+    old_password = request.form.get("old_password", "")
+    old_hashed = hashlib.md5(old_password.encode()).hexdigest()
+    if USERS[login_username]["password"] != old_hashed:
+        return "原密码错误", 403
+
+    new_password = request.form.get("new_password", "")
+    confirm_password = request.form.get("confirm_password", "")
+
+    if not new_password:
+        return "新密码不能为空", 400
+
+    if new_password != confirm_password:
+        return "两次输入的密码不一致", 400
+
+    hashed = hashlib.md5(new_password.encode()).hexdigest()
+    USERS[login_username]["password"] = hashed
+
+    # 同步更新 SQLite 数据库
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    c.execute("UPDATE users SET password = ? WHERE username = ?", (hashed, login_username))
+    conn.commit()
+    conn.close()
+    return redirect(f"/profile?user_id={USERS[login_username]['id']}")
 
 
 if __name__ == "__main__":

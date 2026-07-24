@@ -11,6 +11,7 @@
     {% endif %}
 
     <form method="post" enctype="multipart/form-data" class="login-form">
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
         <div class="form-group">
             <label for="avatar">选择文件：</label>
             <input type="file" id="avatar" name="avatar" class="form-input" required>

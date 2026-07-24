@@ -26,6 +26,7 @@ function refreshCaptcha() {
     {% endif %}
 
     <form method="post" class="login-form">
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
         <input type="hidden" name="captcha_token" value="{{ captcha_token }}">
         <div class="form-group">
             <label for="username">用户名：</label>
