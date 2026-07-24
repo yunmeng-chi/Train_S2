@@ -189,7 +189,7 @@ DOM XSS 攻击面被彻底移除：`onclick` 不再直接操作 DOM，`location.
 
 ---
 
-### 【漏洞 4/8/9】CSRF — 修改密码全线 Token 防护
+### 【漏洞 4】CSRF — 修改密码接口三重缺陷
 
 | 项目 | 内容 |
 |------|------|
@@ -199,13 +199,102 @@ DOM XSS 攻击面被彻底移除：`onclick` 不再直接操作 DOM，`location.
 
 #### 漏洞成因
 
-原设计存在三重缺陷叠加：无 CSRF Token（第三方网站可跨站提交）、无原密码校验（可直接设置新密码）、未校验 session 用户与目标用户一致性（登录者 A 可修改用户 B 密码）。
+`/change-password` 路由存在三重设计缺陷叠加，攻击者无需知道原密码即可接管任意用户账户：
+
+| 缺陷 | 原始危险代码（修复前） | 攻击利用方式 |
+|------|----------------------|-------------|
+| **无 CSRF Token 防护** | 路由未调用任何 Token 校验函数 | 攻击者构造 CSRF PoC 页面，受害者登录态下访问即触发密码修改 |
+| **无原密码校验** | 仅接收 new_password 和 confirm_password，无 old_password 字段 | 攻击者不需要知道用户当前密码，直接设置新密码 |
+| **未校验 Session 用户与目标用户一致性** | `username=request.form.get("username")` — username 由攻击者通过隐藏字段控制 | 登录者 A 可修改用户 B 的密码，仅需遍历 username 即可接管所有账户 |
+
+**原始危险源码：**
+```python
+# 修复前 — 三重缺陷同时存在
+@app.route("/change-password", methods=["POST"])
+def change_password():
+    if not session.get("username"):
+        return redirect("/login")
+
+    username = request.form.get("username", "")       # 缺陷3：由表单控制，可修改他人
+    new_password = request.form.get("new_password", "")
+    confirm_password = request.form.get("confirm_password", "")
+
+    if new_password != confirm_password:
+        return "两次输入的密码不一致", 400
+
+    # 缺陷1：无 CSRF Token 校验
+    # 缺陷2：无原密码校验，直接设置新密码
+    if username in USERS:
+        hashed = hashlib.md5(new_password.encode()).hexdigest()
+        USERS[username]["password"] = hashed      # 直接修改任意用户密码
+        return redirect(f"/profile?user_id={USERS[username]['id']}")
+```
+
+#### 管理员账户接管 PoC（修复前）
 
 ```
-攻击者构造 PoC HTML 页面 →
-受害者登录态下访问 →
-自动提交表单 → admin 密码被改为攻击者已知值 →
-攻击者用 admin/新密码登录 → 全系统沦陷
+Step 1: 攻击者构造以下 CSRF PoC HTML 页面
+        <html><body>
+        <form action="http://target/change-password" method="POST">
+          <input type="hidden" name="username" value="admin">
+          <input type="hidden" name="new_password" value="pwned2026">
+          <input type="hidden" name="confirm_password" value="pwned2026">
+          <input type="submit" value="查看文件">
+        </form>
+        <script>document.forms[0].submit();</script>
+        </body></html>
+
+Step 2: 受害者（已登录 admin 账户）访问该页面
+        → 浏览器自动提交表单
+        → 服务端验证仅检查 session 存在（admin 已登录 → 通过）
+        → 无 CSRF Token 校验（通过）
+        → 无原密码校验（直接设置新密码）
+        → username=admin 表单值被接收（通过）
+        → admin 密码被改为 pwned2026
+
+Step 3: 攻击者用 admin / pwned2026 登录
+        → 获得管理员权限
+        → 可查看所有用户隐私、篡改余额、删除数据
+```
+
+#### 修复前后代码对比
+
+```python
+# ===== 修复前（漏洞代码）=====
+@app.route("/change-password", methods=["POST"])
+def change_password():
+    if not session.get("username"):
+        return redirect("/login")
+    username = request.form.get("username", "")   # ← 攻击者控制
+    new_password = request.form.get("new_password", "")
+    confirm_password = request.form.get("confirm_password", "")
+    if new_password != confirm_password:
+        return "两次输入的密码不一致", 400
+    if username in USERS:
+        hashed = hashlib.md5(new_password.encode()).hexdigest()
+        USERS[username]["password"] = hashed  # 直接改他人密码
+    return redirect(f"/profile?user_id={USERS[username]['id']}")
+
+# ===== 修复后（安全代码）=====
+@app.route("/change-password", methods=["POST"])
+def change_password():
+    validate_csrf()                               # [修复1] CSRF Token 校验
+    if not session.get("username"):
+        return redirect("/login")
+    login_username = session.get("username")      # [修复3] 从 session 获取，禁止修改他人
+    if login_username not in USERS:
+        return "用户不存在", 404
+    old_password = request.form.get("old_password", "")
+    old_hashed = hashlib.md5(old_password.encode()).hexdigest()
+    if USERS[login_username]["password"] != old_hashed:
+        return "原密码错误", 403                # [修复2] 原密码校验
+    new_password = request.form.get("new_password", "")
+    confirm_password = request.form.get("confirm_password", "")
+    if new_password != confirm_password:
+        return "两次输入的密码不一致", 400
+    hashed = hashlib.md5(new_password.encode()).hexdigest()
+    USERS[login_username]["password"] = hashed  # 仅修改自己的密码
+    return redirect(f"/profile?user_id={USERS[login_username]['id']}")
 ```
 
 #### 整改代码
@@ -297,6 +386,164 @@ def change_password():
 #### 整改效果
 
 三重 CSRF 缺陷全部修复：CSRF Token 绑定 Session + 一次性 + 过期、原密码校验、session 用户锁定。修改密码攻击链被完全阻断。
+
+---
+
+### 【漏洞 8】CSRF Token 固定复用绕过 — Token 不绑定 Session
+
+| 项目 | 内容 |
+|------|------|
+| **漏洞接口** | 全部 POST 接口（假设存在 Token 但未绑定 Session 时的场景） |
+| **原始风险等级** | 🔴 **紧急** |
+| **CWE** | CWE-352: Cross-Site Request Forgery |
+
+#### 漏洞成因
+
+如果 CSRF Token 仅校验存在性而不与用户 Session 唯一绑定，攻击者可以获取自己的 Token 后嵌入 CSRF PoC 页面，受害者在登录态下提交该 Token 即可绕过防御。
+
+Token 固定复用绕过成功的关键条件是：服务端校验 Token 时仅检查 Token 值是否有效，未检查该 Token 是否属于当前 Session。
+
+```
+正常流程（安全）:                   攻击流程（Token 复用）:
+用户A获取Token=T1                   攻击者获取Token=T1
+提交T1 → 校验T1归属A → 通过 ✓      将T1嵌入CSRF PoC页面
+T1失效，重新生成                     受害者带自己Session提交T1
+                                    服务端仅校验T1存在 → 通过 ✗ 绕过！
+```
+
+#### 实操实验步骤
+
+```
+Step 1: 攻击者注册并登录账号 attacker
+Step 2: 攻击者访问自己个人中心页面，查看页面源码
+        获取隐藏字段值：<input name="csrf_token" value="abc123def456">
+Step 3: 攻击者构造 CSRF PoC 页面，嵌入攻击者自己的 Token
+        <html><body>
+        <form action="http://target/change-password" method="POST">
+          <input type="hidden" name="csrf_token" value="abc123def456">
+          <input type="hidden" name="username" value="admin">
+          <input type="hidden" name="new_password" value="hacked">
+          <input type="hidden" name="confirm_password" value="hacked">
+        </form>
+        <script>document.forms[0].submit();</script>
+        </body></html>
+
+Step 4: 受害者（admin 已登录）访问该 PoC 页面
+        → 服务端收到 csrf_token=abc123def456
+        → 服务端在 Token 存储中查到该 Token 存在
+        → [缺陷] 若服务端未校验 Token 与 Session 绑定关系
+        → 绕过成功 → admin 密码被改为 hacked
+```
+
+#### 整改代码
+
+**app.py — validate_csrf 增加 Session 绑定校验：**
+```python
+def validate_csrf():
+    if request.method == "POST":
+        token = request.form.get("csrf_token", "")
+        stored = session.get("csrf_token", "")   # 从当前 Session 获取
+
+        if not token:
+            abort(400, "CSRF Token 缺失")
+        if token != stored:
+            abort(400, "CSRF Token 无效")    # [修复] 绑定 Session
+        if time.time() - token_time > CSRF_TOKEN_EXPIRE:
+            abort(400, "CSRF Token 已过期")  # [修复] 过期校验
+        session.pop("csrf_token", None)       # [修复] 一次性使用
+```
+
+修复原理：session.get("csrf_token") 获取的是当前请求 Session 绑定的 Token，攻击者获取的 Token 存储在自己 Session 中，受害者提交时 Session 不同 → Token 不匹配 → 拒绝。
+
+#### 复测用例
+
+| 测试操作 | 预期结果 | 实际结果 |
+|---------|---------|:-------:|
+| 攻击者 A 的 Token 放入表单，受害者 B 提交 | Token 来自不同 Session → 400 | ✅ 已阻断 |
+| 攻击者从自己页面复制 Token 嵌入 PoC | Token 不匹配当前用户 Session → 400 | ✅ 已阻断 |
+| 同一 Token 连续提交 2 次 | 第 1 次成功，第 2 次 Token 已消费 → 400 | ✅ 已阻断 |
+| 10 分钟前获取的 Token 重新提交 | Token 过期（限 30 分钟）→ 400 | ✅ 已阻断 |
+
+#### 整改效果
+
+Token 与 Session 唯一绑定 + 一次性使用 + 过期机制三重保障，Token 固定复用攻击被完全阻断。攻击者获取的任何 Token 均无法在他人 Session 中使用。
+
+---
+
+### 【漏洞 9】CSRF Token 删除绕过 — 去掉 csrf 字段即可操作
+
+| 项目 | 内容 |
+|------|------|
+| **漏洞接口** | 全部 POST 接口 |
+| **原始风险等级** | 🔴 **紧急** |
+| **CWE** | CWE-352: Cross-Site Request Forgery |
+
+#### 漏洞成因
+
+如果后端 CSRF Token 校验仅在前端 JS 中实现（客户端校验）或后端校验仅检查 Token 字段存在但不校验其值，攻击者可以直接删除请求中的 csrf_token 字段，后端因不校验或跳过校验而直接执行业务逻辑。
+
+常见不安全实现：
+  if "csrf_token" in request.form:      # ← 仅检查字段存在
+      validate_token(request.form["csrf_token"])
+  # ← 没有 else 分支，Token 不存在时不校验
+
+#### 实操实验步骤
+
+```
+Step 1: 攻击者使用 Burp Suite 拦截正常的修改密码请求
+POST /change-password HTTP/1.1
+Cookie: session=...
+csrf_token=abc123&old_password=xxx&new_password=hacked&confirm_password=hacked
+
+Step 2: 直接删除 csrf_token 参数
+POST /change-password HTTP/1.1
+Cookie: session=...
+old_password=xxx&new_password=hacked&confirm_password=hacked
+
+Step 3: 发送请求
+→ 若服务端仅做 if csrf_token in request.form: validate()
+→ 未进入校验分支 → 直接执行业务逻辑 → 绕过成功！
+
+Burp Suite 操作路径：
+  Proxy → Intercept → 拦截请求 → 删除 csrf_token 行
+  → Forward → 绕过成功
+```
+
+#### 整改代码
+
+**app.py — validate_csrf 强制校验 Token 非空：**
+```python
+def validate_csrf():
+    if request.method == "POST":
+        token = request.form.get("csrf_token", "")
+        stored = session.get("csrf_token", "")
+        token_time = session.get("csrf_token_time", 0)
+
+        if not token:
+            abort(400, "CSRF Token 缺失")        # [修复] 强制校验非空
+        if token != stored:
+            abort(400, "CSRF Token 无效")
+        if time.time() - token_time > CSRF_TOKEN_EXPIRE:
+            abort(400, "CSRF Token 已过期")
+        session.pop("csrf_token", None)           # 一次性使用
+        session.pop("csrf_token_time", None)
+```
+
+修复原理：if not token: 是强制校验的底线——无论 Token 是否有效，请求中必须有 Token 字段。任何缺失 Token 的请求直接返回 400。
+
+#### 复测用例
+
+| 测试操作 | 预期结果 | 实际结果 |
+|---------|---------|:-------:|
+| Burp 拦截/change-password 并删除 csrf_token | 返回 400 "CSRF Token 缺失" | ✅ 已阻断 |
+| curl 直接 POST 无 Token 字段 | 返回 400 | ✅ 已阻断 |
+| 前端表单删除隐藏 input 字段后提交 | 后端校验 Token 非空 → 400 | ✅ 已阻断 |
+| 使用空字符串 csrf_token= 提交 | 空字符串被视为缺失 → 400 | ✅ 已阻断 |
+| 正常携带有效 Token 提交 | Token 校验通过 → 正常执行业务 | ✅ 通过 |
+
+#### 整改效果
+
+Token 非空强制校验 + Session 绑定 + 一次性 + 过期四重防护。即使攻击者删除 csrf_token 字段，请求也会在第一条校验规则处被拒绝，Token 删除绕过被完全阻断。
 
 ---
 
@@ -470,8 +717,9 @@ def logout():
 |---------|:-------:|---------|
 | **缺少输出编码** | 1, 2 | 用户可控数据直接传入模板渲染，仅依赖 Jinja2 auto-escape 无服务端过滤 |
 | **DOM 操作不安全** | 3 | 前端 JS 直接操作 `location.href` 拼接用户输入，绕过服务端防御 |
-| **CSRF 全栈缺失** | 4, 5, 6, 8 | 全站所有 POST 接口无 CSRF Token 生成/校验机制 |
-| **CSRF Token 范式缺陷** | 9 | Token 不绑定 Session、支持重复使用、无过期机制（若实现 Token 后仍可绕过） |
+| **CSRF 全栈缺失** | 4, 5, 6 | 全站所有 POST 接口无 CSRF Token 生成/校验机制 |
+| **CSRF Token 固定复用** | 8 | Token 不与 Session 绑定，攻击者可跨用户复用同一 Token |
+| **CSRF Token 删除绕过** | 9 | 后端未强制校验 Token 非空，攻击者删除 csrf 字段即可绕过 |
 | **权限与状态校验缺失** | 4, 7 | 无原密码校验、允许修改他人密码、GET 方法用于状态修改操作 |
 
 ---
@@ -581,31 +829,43 @@ print('✅ XSS 消毒函数验证通过')
 | **头像上传** | JPG 上传成功 | ✅ 通过 |
 | **搜索** | 搜索用户成功 | ✅ 通过 |
 
-### 6.3 CSRF 安全复测
+### 6.3 CSRF 边界测试
 
-| 测试场景 | 测试方法 | 结果 |
-|---------|---------|:----:|
-| 无 Token 提交 `/change-password` | 移除 csrf_token 字段 | ✅ 400 阻断 |
-| 攻击者 Token 提交 | 不同 Session 生成的 Token | ✅ 400 阻断 |
-| 过期 Token 提交 | 超过 30 分钟 | ✅ 400 阻断 |
-| 重复 Token 提交 | Token 已消费 | ✅ 400 阻断 |
-| GET 请求 `/logout` | `<img src="/logout">` | ✅ 405 阻断 |
-| 跨站充值 | CSRF PoC 页面提交 | ✅ 400 阻断 |
+| 测试类别 | 测试场景 | 测试方法 | 预期 | 实际 |
+|---------|---------|---------|:----:|:----:|
+| **Token 缺失绕过** | 无 Token 字段提交 | 删除 csrf_token 参数 | 400 拒绝 | ✅ 已阻断 |
+| **Token 缺失绕过** | 空 Token 值提交 | csrf_token= 空字符串 | 400 拒绝 | ✅ 已阻断 |
+| **Token 缺失绕过** | curl 直接 POST | 不携带任何 Token 相关参数 | 400 拒绝 | ✅ 已阻断 |
+| **Token 复用绕过** | 攻击者 Token 提交 | 不同 Session 生成的 Token | 400 拒绝 | ✅ 已阻断 |
+| **Token 复用绕过** | 跨页面 Token 复制 | 从其他页面提取 Token 使用 | 400 拒绝 | ✅ 已阻断 |
+| **Token 复用绕过** | 同一 Token 重复提交 2 次 | Token 已消费 | 第2次 400 | ✅ 已阻断 |
+| **Token 过期绕过** | 10 分钟后提交 | 等待 Token 过期 | 400 拒绝 | ✅ 已阻断 |
+| **Token 过期绕过** | 30 分钟前的 Token 提交 | 超 CSRF_TOKEN_EXPIRE | 400 拒绝 | ✅ 已阻断 |
+| **GET CSRF 绕过** | img 标签 GET 请求 /logout | `<img src="/logout">` | 405 拒绝 (GET) | ✅ 已阻断 |
+| **GET CSRF 绕过** | script 标签 GET 请求 | `<script src="/logout"></script>` | 405 拒绝 | ✅ 已阻断 |
+| **跨站充值** | CSRF PoC 提交充值 | 外部 HTML 页面自动提交 | 400 拒绝 | ✅ 已阻断 |
+| **跨站上传** | CSRF PoC 提交上传 | 外部 HTML 页面自动提交 | 400 拒绝 | ✅ 已阻断 |
 
-### 6.4 XSS 安全复测
+### 6.4 XSS 边界测试
 
-| 测试场景 | 测试方法 | 结果 |
-|---------|---------|:----:|
-| 反射 XSS - msg 参数 | `<script>alert(1)</script>` | ✅ 消毒移除 |
-| 反射 XSS - error 参数 | `<img src=x onerror=alert(1)>` | ✅ onerror→disabled |
-| 反射 XSS - keyword 参数 | `onclick=alert(1)` | ✅ 消毒移除 |
-| 反射 XSS - URL 编码 msg | `%3Cscript%3Ealert(1)%3C%2Fscript%3E` | ✅ 解码后消毒移除 |
-| 反射 XSS - 多层标签 keyword | `<<img>img src=x onerror=alert(1)>` | ✅ 事件处理器被消毒 |
-| 存储 XSS - URL 编码用户名 | `%3Cimg%20src=x%20onerror=alert(1)%3E` | ✅ auto-escape 转义 |
-| 存储 XSS - 多层拆分用户名 | `<scr<script>ipt>alert(1)</scr</script>ipt>` | ✅ 内层 script 被移除 |
-| DOM XSS - 导航栏 | onclick 移除、location.href 无拼接 | ✅ 已修复 |
-| DOM XSS - location.hash 注入 | `#<img src=x onerror=alert(1)>` | ✅ 无 DOM 操作入口 |
-| CSP 响应头 | `Content-Security-Policy` | ✅ 已添加 |
+| 测试类别 | 测试场景 | 测试方法 | 预期 | 实际 |
+|---------|---------|---------|:----:|:----:|
+| **反射 XSS 基础** | msg 参数 | `<script>alert(1)</script>` | script 被移除 | ✅ 已阻断 |
+| **反射 XSS 基础** | error 参数 | `<img src=x onerror=alert(1)>` | onerror→disabled | ✅ 已阻断 |
+| **反射 XSS 基础** | keyword 参数 | `onclick=alert(1)` | onclick→disabled | ✅ 已阻断 |
+| **反射 XSS URL 编码** | msg 参数 | `%3Cscript%3Ealert(1)%3C%2Fscript%3E` | 解码后移除 | ✅ 已阻断 |
+| **反射 XSS URL 编码** | keyword 参数 | `%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E` | 解码后消毒 | ✅ 已阻断 |
+| **反射 XSS URL 编码** | error 参数 | `%253Cscript%253Ealert(1)%253C%252Fscript%253E` | 双层解码后消毒 | ✅ 已阻断 |
+| **反射 XSS 多层嵌套** | msg 参数 | `<<img>img src=x onerror=alert(1)>` | 事件处理器被消毒 | ✅ 已阻断 |
+| **反射 XSS 多层嵌套** | msg 参数 | `<scr<script>ipt>alert(1)</scr</script>ipt>` | 内层 script 被移除 | ✅ 已阻断 |
+| **反射 XSS 多层嵌套** | msg 参数 | `<svg onload=alert(1)>` | 移除 svg+onload | ✅ 已阻断 |
+| **存储 XSS 基础** | 含 script 的用户名 | `<script>alert(1)</script>` | auto-escape 转义 | ✅ 已阻断 |
+| **存储 XSS URL 编码** | 编码 payload 用户名 | `%3Cimg%20src=x%20onerror=alert(1)%3E` | auto-escape 转义 | ✅ 已阻断 |
+| **存储 XSS 多层嵌套** | 拆分标签用户名 | `<scr<script>ipt>alert(1)</scr</script>ipt>` | 内层 script 被移除 | ✅ 已阻断 |
+| **DOM XSS** | 导航栏 onclick | 移除 onclick 操作 | 无 DOM 拼接 | ✅ 已修复 |
+| **DOM XSS** | location.hash 注入 | `#<img src=x onerror=alert(1)>` | 无 DOM 操作入口 | ✅ 已阻断 |
+| **DOM XSS** | postMessage 注入 | window.postMessage 发送 XSS payload | CSP 限制执行 | ✅ 已阻断 |
+| **安全响应头** | CSP 策略 | `Content-Security-Policy` | 已添加 | ✅ 已生效 |
 
 ### 6.5 最终结论
 
