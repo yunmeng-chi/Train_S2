@@ -16,11 +16,15 @@
                 <a href="/upload" class="navbar-link">上传头像</a>
                 <a href="/page?name=help" class="navbar-link">帮助中心</a>
                 <a href="/search" class="navbar-link">搜索</a>
+                <a href="/welcome" class="navbar-link">欢迎页</a>
+                <a href="/feedback" class="navbar-link">反馈</a>
                 <form method="post" action="/logout" style="display:inline;margin:0;padding:0">
                     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
                     <button type="submit" class="navbar-link" style="border:none;cursor:pointer;font-size:14px;padding:6px 14px;border-radius:4px;background:rgba(255,255,255,0.15);color:inherit;font-family:inherit">退出</button>
                 </form>
             {% else %}
+                <a href="/welcome" class="navbar-link">欢迎页</a>
+                <a href="/feedback" class="navbar-link">反馈</a>
                 <a href="/login" class="navbar-link">登录</a>
                 <a href="/register" class="navbar-link">注册</a>
             {% endif %}

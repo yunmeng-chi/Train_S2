@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, session, make_response, jsonify, abort
+from flask import Flask, render_template, render_template_string, request, redirect, session, make_response, jsonify, abort
 import time
 import random
 import string
@@ -605,6 +605,112 @@ def change_password():
     conn.commit()
     conn.close()
     return redirect(f"/profile?user_id={USERS[login_username]['id']}")
+
+
+@app.route("/welcome")
+def welcome():
+    name = request.args.get("name", "")
+    if not name:
+        name = "亲爱的用户"
+    # [修复SSTI CWE-94/CWE-1336] 改为模板变量传参，禁止 f-string 拼接用户输入
+    return render_template_string("""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>欢迎页</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-brand">用户管理系统</div>
+        <div class="navbar-menu">
+            <a href="/" class="navbar-link">首页</a>
+            <a href="/welcome" class="navbar-link">欢迎页</a>
+            <a href="/feedback" class="navbar-link">反馈</a>
+            <a href="/login" class="navbar-link">登录</a>
+        </div>
+    </nav>
+    <main class="container">
+        <div class="card">
+            <h1>欢迎你，{{ name }}！</h1>
+        </div>
+    </main>
+</body>
+</html>""", name=name)
+
+
+@app.route("/feedback", methods=["GET", "POST"])
+def feedback():
+    if request.method == "POST":
+        name = request.form.get("name", "")
+        message = request.form.get("message", "")
+        # [修复SSTI CWE-94/CWE-1336] 改为模板变量传参，禁止 f-string 拼接用户输入
+        return render_template_string("""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>反馈结果</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-brand">用户管理系统</div>
+        <div class="navbar-menu">
+            <a href="/" class="navbar-link">首页</a>
+            <a href="/welcome" class="navbar-link">欢迎页</a>
+            <a href="/feedback" class="navbar-link">反馈</a>
+            <a href="/login" class="navbar-link">登录</a>
+        </div>
+    </nav>
+    <main class="container">
+        <div class="card">
+            <h2>{{ name }} 的反馈：</h2>
+            <p>{{ message }}</p>
+            <p style="text-align:center;margin-top:16px"><a href="/feedback" style="color:#667eea;text-decoration:underline">返回反馈页</a></p>
+        </div>
+    </main>
+</body>
+</html>""", name=name, message=message)
+
+    return render_template_string("""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>反馈</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-brand">用户管理系统</div>
+        <div class="navbar-menu">
+            <a href="/" class="navbar-link">首页</a>
+            <a href="/welcome" class="navbar-link">欢迎页</a>
+            <a href="/feedback" class="navbar-link">反馈</a>
+            <a href="/login" class="navbar-link">登录</a>
+        </div>
+    </nav>
+    <main class="container">
+        <div class="card" style="max-width:500px;margin:0 auto">
+            <h2 class="card-title">意见反馈</h2>
+            <form method="post" class="login-form">
+                <div class="form-group">
+                    <label for="name">姓名：</label>
+                    <input type="text" id="name" name="name" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label for="message">留言：</label>
+                    <textarea id="message" name="message" class="form-input" rows="5" required></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">提交反馈</button>
+            </form>
+            <p style="text-align:center;margin-top:16px"><a href="/" style="color:#667eea;text-decoration:underline">返回首页</a></p>
+        </div>
+    </main>
+</body>
+</html>""")
 
 
 if __name__ == "__main__":
