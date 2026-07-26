@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}Ping 测试{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:700px;margin:0 auto">
+    <h2 class="card-title">Ping 网络诊断</h2>
+    <form method="post" class="login-form">
+        <div class="form-group">
+            <label for="ip">IP 地址或域名：</label>
+            <input type="text" id="ip" name="ip" class="form-input" value="{{ ip }}" placeholder="例如：114.114.114.114" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Ping</button>
+    </form>
+</div>
+
+{% if result %}
+<div class="card" style="max-width:700px;margin:0 auto">
+    <h2 class="card-title">执行结果</h2>
+    <div style="background:#1e1e1e;color:#00ff00;padding:16px 20px;border-radius:6px;font-family:Consolas,'Courier New',monospace;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all;max-height:500px;overflow-y:auto">
+{{ result }}
+    </div>
+</div>
+{% endif %}
+
+<p style="text-align:center;margin-top:16px"><a href="/" style="color:#667eea;text-decoration:underline">返回首页</a></p>
+{% endblock %}

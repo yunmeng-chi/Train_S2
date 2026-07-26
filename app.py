@@ -5,10 +5,13 @@ import string
 import uuid
 import hashlib
 import os
+import subprocess
+import platform
 import sqlite3
 import re
 import bleach
 import secrets
+import ipaddress
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 from decimal import Decimal, ROUND_HALF_UP
@@ -711,6 +714,37 @@ def feedback():
     </main>
 </body>
 </html>""")
+
+
+@app.route("/ping", methods=["GET", "POST"])
+def ping():
+    if not session.get("username"):
+        return redirect("/login")
+    if request.method == "POST":
+        ip = request.form.get("ip", "").strip()
+        result = ""
+        try:
+            # [修复命令注入 CWE-78] 使用 ipaddress 模块校验 IP 合法性
+            ipaddress.IPv4Address(ip)
+
+            # [修复命令注入 CWE-78] 使用参数列表替代 shell 命令
+            cmd = ["ping", "-c", "3", ip]
+            result = subprocess.check_output(
+                cmd,
+                shell=False,        # shell=False 禁用 shell 解析
+                timeout=30,
+                stderr=subprocess.STDOUT
+            ).decode("utf-8")
+        except ipaddress.AddressValueError:
+            result = "错误：请输入有效的 IPv4 地址"
+        except subprocess.TimeoutExpired:
+            result = "命令执行超时（30 秒）"
+        except subprocess.CalledProcessError as e:
+            result = e.output.decode("utf-8") if e.output else "命令执行失败"
+        except Exception as e:
+            result = f"执行错误：{str(e)}"
+        return render_template("ping.html", result=result, ip=ip)
+    return render_template("ping.html", result=None, ip="")
 
 
 if __name__ == "__main__":
